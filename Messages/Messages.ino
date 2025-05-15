@@ -146,15 +146,39 @@ void parseMessage (char *message, int *type, int *reply, int *source_id, int *de
   memmove(payload, message+2, strlen(message+2)+1);
 }
 
-void parsePayload (char *payload){
-
+void parsePayload (char *payload, double *latitude, double *longitude, int *origin_id){
+  // Extract payload contents
+  JsonDocument payload_json;
+  deserializeJson(payload_json, payload);
+  
+  *latitude = payload_json["latitude"];
+  *longitude = payload_json["longitude"];
+  *origin_id = payload_json["id"];
 }
 
 void setup() {
   // put your setup code here, to run once:
-  char message[100];
-  getDynamiteMessage(message, 1, 4.3189, 121.12345);
-  Serial.println(message)
+  // Test code
+  // Serial.begin(9600);
+  // char message[100];
+  // getDynamiteMessage(message, 1, 4.3189, 121.12345);
+  // Serial.println(message);
+  
+  // int type, reply, source, destination;
+  // char payload[50];
+  // parseMessage(message, &type, &reply, &source, &destination, payload);
+  // Serial.println(type);
+  // Serial.println(reply);
+  // Serial.println(source);
+  // Serial.println(destination);
+  // Serial.println(payload);
+
+  // double latitude, longitude;
+  // int origin_id;
+  // parsePayload (payload, &latitude, &longitude, &origin_id);
+  // Serial.println(latitude);
+  // Serial.println(longitude);
+  // Serial.println(origin_id);
 }
 
 void loop() {

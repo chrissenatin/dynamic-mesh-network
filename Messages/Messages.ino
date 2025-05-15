@@ -1,8 +1,7 @@
-#include <cstring>
-#include <cstdint>
-#include <cmath>
+#include <ArduinoJson.h>
+#include <math.h>
 
-uint8_t node_id = 2
+uint8_t node_id = 2;
 
 double haversine(double lat1, double lon1){
   // Adapted from: https://www.geeksforgeeks.org/haversine-formula-to-find-distance-between-two-points-on-a-sphere/
@@ -25,16 +24,16 @@ double haversine(double lat1, double lon1){
   return rad * c;
 }
 
-void createPayload(char *payload, double latitude, double longitude){
-  // create payload as json string
-  payload[0] = '\0';
-  strcat(payload, "{");
-  sprintf(payload+strlen(payload), "latitude:%f", latitude);
-  strcat(payload, ",");
-  sprintf(payload+strlen(payload), "longitude:%f", longitude);
-  strcat(payload, ",");
-  sprintf(payload+strlen(payload), "id:%d", node_id);
-  strcat(payload, "}");
+void createPayload(char *payload, size_t buffer_size, double latitude, double longitude){
+  // create payload as Json
+  StaticJsonDocument<128> payload_json;
+
+  payload_json["latitude"] = latitude;
+  payload_json["longitude"] = longitude;
+  payload_json["id"] = node_id;
+
+  // move JSON to the payload buffer
+  serializeJson(payload_json, payload, buffer_size);
 }
 
 void getBroadcastMessage (char *message, double latitude, double longitude) {
@@ -77,8 +76,8 @@ void getBroadcastReply (char *message, uint8_t destination_id, double latitude, 
   message[2] = '\0';
 
   // create and concatenate payload to message
-  char payload[42];
-  createPayload(payload, latitude, longitude);
+  char payload[48];
+  createPayload(payload, 48, latitude, longitude);
 
   strcat(message, payload);
 }
@@ -99,8 +98,8 @@ void getDynamiteMessage (char *message, uint8_t destination_id, double latitude,
   message[2] = '\0';
 
   // create and concatenate payload to message
-  char payload[42];
-  createPayload(payload, latitude, longitude);
+  char payload[48];
+  createPayload(payload, 48, latitude, longitude);
 
   strcat(message, payload);
 }
@@ -121,12 +120,14 @@ void getDynamiteAcknowledge (char *message, uint8_t destination_id, uint8_t orig
   message[2] = '\0';
 
   // create and concatenate payload to message
-  char payload[9];
+  char payload[11];
+  // create the JSON file
+  StaticJsonDocument<128> payload_json;
 
-  payload[0] = '\0';
-  strcat(payload, "{");
-  sprintf(payload+strlen(payload), "id:%d", origin_id);
-  strcat(payload, "}");
+  payload_json["id"] = node_id;
+
+  // move JSON to the payload buffer
+  serializeJson(payload_json, payload, 11);
 
   strcat(message, payload);
 }
@@ -145,9 +146,15 @@ void parseMessage (char *message, int *type, int *reply, int *source_id, int *de
   memmove(payload, message+2, strlen(message+2)+1);
 }
 
+void parsePayload (char *payload){
+
+}
+
 void setup() {
   // put your setup code here, to run once:
-
+  char message[100];
+  getDynamiteMessage(message, 1, 4.3189, 121.12345);
+  Serial.println(message)
 }
 
 void loop() {

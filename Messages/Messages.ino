@@ -156,6 +156,154 @@ void parsePayload (char *payload, double *latitude, double *longitude, uint8_t *
   *origin_id = payload_json["id"];
 }
 
+
+
+void checkSpresense(){
+
+  if (SPRESENSE.available()) {
+    // Read data from Spresense
+    char incomingByte = SPRESENSE.read();
+    // Print received data to Arduino serial monitor for debugging
+    Serial.print("Received: ");
+    Serial.println(incomingByte);
+
+
+    // get latitude and longitude from Spresense data
+    uint8_t latitude;
+    uint8_t longitude;
+
+    //todo: parsing. spresense messages are going to be different from lora messages
+    parseSpresenseMessage(latitude, longitude);
+
+    //ASSUMPTION: All spresense data received in this function is a bomb message
+
+    //create broadcast message
+    char message[10];
+    getBroadcastMessage(message, latitude, longitude);
+    
+    //send broadcast message
+    rf95.send(message, 12); // strlen(data));
+    rf95.waitPacketSent();
+
+
+ 
+ 
+
+      // --- Block and listen for 1 second ---
+  
+      double closestLat = 0.0, closestLon = 0.0;
+      uint8_t closestNodeId = 0;
+      double minDistance = 1e9; // arbitrarily large number
+
+      unsigned long start = millis();
+      while (millis() - start < 1000) {
+        if (rf95.available()) {
+          uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
+          uint8_t len = sizeof(buf);
+          if (rf95.recv(buf, &len)) {
+
+            char *msg = (char *)buf;
+
+            // Parse message
+            uint8_t type, reply, source_id, destination_id;
+            char payload[100];
+            parseMessage(msg, &type, &reply, &source_id, &destination_id, payload);
+
+            // Parse payload
+            double lat, lon;
+            uint8_t origin_id;
+            parsePayload(payload, &lat, &lon, &origin_id);
+
+            // Calculate distance from shore
+            double dist = haversine(lat, lon);
+            if (dist < minDistance) {
+              minDistance = dist;
+              closestLat = lat;
+              closestLon = lon;
+              closestNodeId = origin_id;
+            }
+          }
+        }
+      }
+
+      
+
+      // Send message to chosen node
+       // 5. Send a message to the closest node
+      if (minDistance < 1e9) {
+        char finalMessage[100];
+        getDynamiteMessage(finalMessage, closestNodeId, closestLat, closestLon);
+
+        rf95.send((uint8_t *)finalMessage, strlen(finalMessage));
+        rf95.waitPacketSent();
+
+        Serial.print("Sent dynamite warning to node ");
+        Serial.println(closestNodeId);
+      } else {
+        Serial.println("No valid responses received.");
+      }
+  }
+}
+
+
+void checkLora() {
+
+  uint8_t buf[RH_RF95_MAX_MESSAGE_LEN]; // Buffer to hold the incoming message
+  uint8_t len = sizeof(buf);
+  if (rf95.recv(buf, &len)) {
+    // Successfully received a response
+    buf[len] = '\0'; // Null-terminate if you want to treat it as a string
+    String msg = (char*)buf;
+
+    uint8_t type, reply, source_id, destination_id;
+    char payload[100];
+    parseMessage(msg, &type, &reply, &source_id, &destination_id, payload);
+
+    switch (type) {
+      case 0: // binary 00
+        Serial.println("Type: 00");
+        // Handle case 00
+        break;
+
+      case 1: // binary 01
+        Serial.println("Type: 01");
+        // Handle case 01
+        break;
+
+      case 2: // binary 10
+        Serial.println("Type: 10");
+        // Handle case 10
+        break;
+
+      case 3: // binary 11
+        Serial.println("Type: 11");
+        // Handle case 11
+        break;
+
+      default:
+        Serial.print("Unknown type: ");
+        Serial.println(type);
+        break;
+    }
+
+
+    Serial.println("Received response: " + response);
+  } else {
+    Serial.println("Receive failed");
+  }
+
+
+}
+
+void loop() {
+
+  ///checks Spresense for any bomb messages
+  checkSpresense();
+
+  ///checks lora module for messages from other nodes
+  checkLora();
+
+}
 void setup() {
   // put your setup code here, to run once:
   // Test code
@@ -202,6 +350,7 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+  checkSpresense();
+
 
 }

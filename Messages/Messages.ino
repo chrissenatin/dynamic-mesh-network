@@ -131,6 +131,20 @@ void getDynamiteAcknowledge (char *message, uint8_t destination_id, uint8_t orig
   strcat(message, payload);
 }
 
+void parseMessage (char *message, int *type, int *reply, int *source_id, int *destination_id, char *payload){
+  // get header from the message and extract info
+  uint16_t header = (message[1] << 8) | message[0] << 0;
+  *type = (header & 32768) >> 15;
+  *reply = (header & 16384) >> 14;
+  *source_id = (header & 16128) >> 8;
+  *destination_id = (header & 252) >> 2;
+
+  // get payload from message
+  // message+2 gives string from 3rd byte skipping header
+  // strlen(message+2)+1 to include null terminator
+  memmove(payload, message+2, strlen(message+2)+1);
+}
+
 void setup() {
   // put your setup code here, to run once:
 

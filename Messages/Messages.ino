@@ -1,6 +1,29 @@
 #include <ArduinoJson.h>
 #include <math.h>
 
+#include <RH_RF95.h>
+#include <SoftwareSerial.h>
+#include <RHMesh.h>
+
+// LoRa communication settings
+#define RF95_CS 10
+#define RF95_INT 2
+#define RF95_RST 9
+
+#define RF95_FREQ 915.0
+
+RH_RF95 rf95(RF95_CS, RF95_INT);
+
+uint8_t data[RH_RF95_MAX_MESSAGE_LEN] = "Hello World!";
+
+uint8_t buoyID = 145; 
+
+// Serial communication with Spresense
+const byte rxPin = 4;
+const byte txPin = 5;
+
+SoftwareSerial SPRESENSE (rxPin, txPin);
+
 uint8_t node_id = 2;
 
 double haversine(double lat1, double lon1){
@@ -175,6 +198,13 @@ void checkSpresense(){
     //todo: parsing. spresense messages are going to be different from lora messages
     parseSpresenseMessage(latitude, longitude);
 
+
+    handshake(latitude, longitude);
+  }
+}
+
+void handshake(double latitude, double longitude){
+  
     //ASSUMPTION: All spresense data received in this function is a bomb message
 
     //create broadcast message
@@ -184,10 +214,6 @@ void checkSpresense(){
     //send broadcast message
     rf95.send(message, 12); // strlen(data));
     rf95.waitPacketSent();
-
-
- 
- 
 
       // --- Block and listen for 1 second ---
   
@@ -229,7 +255,7 @@ void checkSpresense(){
       
 
       // Send message to chosen node
-       // 5. Send a message to the closest node
+      // 5. Send a message to the closest node
       if (minDistance < 1e9) {
         char finalMessage[100];
         getDynamiteMessage(finalMessage, closestNodeId, closestLat, closestLon);
@@ -242,7 +268,6 @@ void checkSpresense(){
       } else {
         Serial.println("No valid responses received.");
       }
-  }
 }
 
 
@@ -263,21 +288,31 @@ void checkLora() {
       case 0: // binary 00
         Serial.println("Type: 00");
         // Handle case 00
+        //todo: get current coordinates from spresense
+
+        //send coordinates as a reply
+        char msg[100];            //destination is source of sender
+        getBroadcastReply (*msg, source_id, latitude, longitude)
         break;
 
       case 1: // binary 01
-        Serial.println("Type: 01");
-        // Handle case 01
+        Serial.println("Type: 01 -> This shouldnt happen");
+        
         break;
 
       case 2: // binary 10
-        Serial.println("Type: 10");
-        // Handle case 10
+        Serial.println("Type: 10 -> Node was chosen to be next sender");
+         // Parse payload to get latitude and longitude
+        double lat, lon;
+        uint8_t origin_id;
+        parsePayload(payload, &lat, &lon, &origin_id);
+
+        handshake(lat,lon);
         break;
 
       case 3: // binary 11
-        Serial.println("Type: 11");
-        // Handle case 11
+        Serial.println("Type: 11 -> this shouldnt happen");
+        
         break;
 
       default:
@@ -295,16 +330,22 @@ void checkLora() {
 
 }
 
-void loop() {
 
-  ///checks Spresense for any bomb messages
-  checkSpresense();
-
-  ///checks lora module for messages from other nodes
-  checkLora();
-
-}
 void setup() {
+
+  // put your setup code here, to run once:
+  Serial.begin(9600);
+  pinMode(RF95_RST, OUTPUT);
+  digitalWrite(RF95_RST, HIGH);
+  delay(10);
+  digitalWrite(RF95_RST, LOW);
+  delay(10);
+  digitalWrite(RF95_RST, HIGH);
+  delay(10);
+  rf95.init();
+  rf95.setFrequency(RF95_FREQ);
+  rf95.setTxPower(23, false);
+  SPRESENSE.begin(9600);
   // put your setup code here, to run once:
   // Test code
   // Serial.begin(9600);
@@ -351,6 +392,8 @@ void setup() {
 
 void loop() {
   checkSpresense();
+
+  checkLora();
 
 
 }

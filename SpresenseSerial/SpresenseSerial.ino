@@ -26,7 +26,7 @@ void setup()
 void checkArduino(){
     UNO.listen();
     int messageLength = UNO.available();
-    char message[ARDUINO_MAX_MESSAGE_LEN];
+    char message[100];
     for(int ctr = 0; ctr < messageLength; ctr++){
     // Read data from Spresense
     message[ctr] = UNO.read();

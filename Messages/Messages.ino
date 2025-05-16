@@ -17,8 +17,6 @@
 
 RH_RF95 rf95(RF95_CS, RF95_INT);
 
-uint8_t data[RH_RF95_MAX_MESSAGE_LEN] = "Hello World!";
-
 uint8_t buoyID = 145; 
 
 // Serial communication with Spresense
@@ -64,12 +62,11 @@ void getBroadcastMessage (char *message, double latitude, double longitude) {
   // create 16 bit header - 00(srcID)(destID)
   // 0 type = broadcast
   // 0 reply = no
-  // 6 bits source ID = buoyID
-  // 6 bits destination ID = same as source since broadcast, can possibly set unique ID
-  // 2 bit empty
+  // 7 bits source ID = buoyID
+  // 7 bits destination ID = same as source since broadcast, can possibly set unique ID
 
   // 0 type 0 reply, set own ID as source and destination ID since broadcast
-  uint16_t header = (buoyID << 8) | (buoyID << 2);
+  uint16_t header = (buoyID << 7) | buoyID;
 
   // convert to bitstring
   memcpy(message, &header, 2);
@@ -82,18 +79,17 @@ void getBroadcastReply (char *message, uint8_t destination_id, double latitude, 
   // create 16 bit header
   // 0 type = broadcast
   // 1 reply = yes
-  // 6 bits source ID
-  // 6 bits destination ID
-  // 2 bit empty
+  // 7 bits source ID
+  // 7 bits destination ID
 
   // set reply to 1
   uint16_t header = 16384;
 
   // set source ID
-  header = header | (buoyID << 8);
+  header = header | (buoyID << 7);
 
   // set destination ID
-  header = header | (destination_id << 2);
+  header = header | destination_id;
 
   // convert to bitstring
   memcpy(message, &header, 2);
@@ -110,12 +106,11 @@ void getDynamiteMessage (char *message, uint8_t destination_id, double latitude,
   // create 16 bit header - 00(srcID)(destID)
   // 1 type = dynamite
   // 0 reply = no
-  // 6 bits source ID = buoyID
-  // 6 bits destination ID = destination_id
-  // 2 bit empty
+  // 7 bits source ID = buoyID
+  // 7 bits destination ID = destination_id
 
   // 1 type 0 reply, set own ID as source and destination ID as given
-  uint16_t header = 32768 | (buoyID << 8) | (destination_id << 2);
+  uint16_t header = 32768 | (buoyID << 7) | (destination_id);
 
   // convert to bitstring
   memcpy(message, &header, 2);
@@ -128,16 +123,33 @@ void getDynamiteMessage (char *message, uint8_t destination_id, double latitude,
   strcat(message, payload);
 }
 
+void getDynamitePass (char *message, char *payload, uint8_t destination_id, double latitude, double longitude) {
+  // create 16 bit header - 00(srcID)(destID)
+  // 1 type = dynamite
+  // 0 reply = no
+  // 7 bits source ID = buoyID
+  // 7 bits destination ID = destination_id
+
+  // 1 type 0 reply, set own ID as source and destination ID as given
+  uint16_t header = 32768 | (buoyID << 7) | (destination_id);
+
+  // convert to bitstring
+  memcpy(message, &header, 2);
+  message[2] = '\0';
+
+  // concatenate original payload to message
+  strcat(message, payload);
+}
+
 void getDynamiteAcknowledge (char *message, uint8_t destination_id, uint8_t origin_id) {
   // create 16 bit header - 00(srcID)(destID)
   // 1 type = dynamite
   // 1 reply = yes
-  // 6 bits source ID = buoyID
-  // 6 bits destination ID = destination_id
-  // 2 bit empty
+  // 7 bits source ID = buoyID
+  // 7 bits destination ID = destination_id
 
   // 1 type 1 reply, set own ID as source and destination ID as given
-  uint16_t header = 49152 | (2 << 8) | (destination_id << 2);
+  uint16_t header = 49152 | (buoyID << 8) | (destination_id);
 
   // convert to bitstring
   memcpy(message, &header, 2);
@@ -161,8 +173,8 @@ void parseMessage (char *message, uint8_t *type, uint8_t *reply, uint8_t *source
   uint16_t header = (message[1] << 8) | message[0] << 0;
   *type = (header & 32768) >> 15;
   *reply = (header & 16384) >> 14;
-  *source_id = (header & 16128) >> 8;
-  *destination_id = (header & 252) >> 2;
+  *source_id = (header & 16256) >> 7;
+  *destination_id = (header & 127);
 
   // get payload from message
   // message+2 gives string from 3rd byte skipping header
@@ -183,26 +195,36 @@ void parsePayload (char *payload, double *latitude, double *longitude, uint8_t *
 void checkSpresense(){
   SPRESENSE.listen();
   int messageLength = SPRESENSE.available();
-  char message[RH_RF95_MAX_MESSAGE_LEN];
-  for(int ctr = 0; ctr < messageLength; ctr++){
-    // Read data from Spresense
-    message[ctr] = SPRESENSE.read();
-    // Print received data to Arduino serial monitor for debugging
-    Serial.print(message[ctr]);
+  if (messageLength){
+    char message[RH_RF95_MAX_MESSAGE_LEN];
+    for(int ctr = 0; ctr < messageLength; ctr++){
+      // Read data from Spresense
+      message[ctr] = SPRESENSE.read();
+      // Print received data to Arduino serial monitor for debugging
+      Serial.print(message[ctr]);
+    }
+    Serial.println();
+    message[messageLength] = '\0';
+    
+    // get latitude and longitude from Spresense data
+    double latitude, longitude;
+    uint8_t id;
+    parsePayload(message, &latitude, &longitude,&id);
+
+    handshake(latitude, longitude, &id);
+
+    char finalMessage[RH_RF95_MAX_MESSAGE_LEN];
+    getDynamiteMessage(finalMessage, id, latitude, longitude);
+
+    rf95.send((uint8_t *)finalMessage, strlen(finalMessage));
+    rf95.waitPacketSent();
+
+    Serial.print("Sent dynamite warning to node ");
+    Serial.println(id);
   }
-  Serial.println();
-  message[messageLength] = '\0';
-  
-  // get latitude and longitude from Spresense data
-  double latitude, longitude;
-  uint8_t id;
-  parsePayload(message, &latitude, &longitude,&id);
-
-
-  handshake(latitude, longitude);
 }
 
-void handshake(double latitude, double longitude){
+void handshake(double latitude, double longitude, uint8_t *destination_id){
   
     //ASSUMPTION: All spresense data received in this function is a bomb message
 
@@ -250,22 +272,14 @@ void handshake(double latitude, double longitude){
           }
         }
       }
-
       
 
       // Send message to chosen node
       // 5. Send a message to the closest node
       if (minDistance < 1e9) {
-        char finalMessage[100];
-        getDynamiteMessage(finalMessage, closestNodeId, closestLat, closestLon);
-
-        rf95.send((uint8_t *)finalMessage, strlen(finalMessage));
-        rf95.waitPacketSent();
-
-        Serial.print("Sent dynamite warning to node ");
-        Serial.println(closestNodeId);
+        *destination_id = closestNodeId;
       } else {
-        Serial.println("No valid responses received.");
+        *destination_id = 128; // 0b10000000
       }
 }
 
@@ -288,13 +302,9 @@ void getCoordinates(double *latitude, double *longitude){
 
    double lat, lon;
   uint8_t origin_id;
-  parsePayload(payload, &lat, &lon, &origin_id);
-
-
-  //todo: get current coordinates from spresense
-  // 14.648696 121.068517 DCS
-  *latitude = 14.648696;
-  *longitude = 121.068517;
+  parsePayload(message, &lat, &lon, &origin_id);
+  *latitude = lat;
+  *longitude = lon;
 }
 
 void checkLora() {
@@ -338,10 +348,19 @@ void checkLora() {
          // Parse payload to get latitude and longitude
          // Spresense message is same format as other messages, except without id
         double lat, lon;
-        uint8_t origin_id;
+        uint8_t origin_id, destination_id;
         parsePayload(payload, &lat, &lon, &origin_id);
 
-        handshake(lat,lon);
+        handshake(lat,lon,destination_id);
+
+        char message[RH_RF95_MAX_MESSAGE_LEN];
+        getDynamitePass(message, payload, destination_id, latitude, longitude);
+
+        rf95.send((uint8_t *)message, strlen(message));
+        rf95.waitPacketSent();
+
+        Serial.print("Passed dynamite warning to node ");
+        Serial.println(destination_id);
 
         break;
 
@@ -355,14 +374,15 @@ void checkLora() {
         Serial.println(type);
         break;
     }
-
     String response = (char *)message;
     Serial.println("Received response: " + response);
     }
 
     
   } else {
-    Serial.println("Receive failed");
+    String response = (char *)message;
+    Serial.println("Received response: " + response);
+    Serial.println("Receive Failed");
   }
 
 
@@ -435,6 +455,4 @@ void loop() {
   checkSpresense();
 
   checkLora();
-
-
 }

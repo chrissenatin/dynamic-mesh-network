@@ -270,6 +270,27 @@ void handshake(double latitude, double longitude){
 }
 
 void getCoordinates(double *latitude, double *longitude){
+
+  SPRESENSE.write("coord request");
+  delay(100);
+
+  SPRESENSE.listen();
+  int messageLength = SPRESENSE.available();
+  char message[RH_RF95_MAX_MESSAGE_LEN];
+  for(int ctr = 0; ctr < messageLength; ctr++){
+    // Read data from Spresense
+    message[ctr] = SPRESENSE.read();
+    // Print received data to Arduino serial monitor for debugging
+    Serial.print(message[ctr]);
+  }
+  Serial.println();
+  message[messageLength] = '\0';
+
+   double lat, lon;
+  uint8_t origin_id;
+  parsePayload(payload, &lat, &lon, &origin_id);
+
+
   //todo: get current coordinates from spresense
   // 14.648696 121.068517 DCS
   *latitude = 14.648696;

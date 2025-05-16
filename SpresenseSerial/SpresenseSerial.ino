@@ -35,15 +35,18 @@ void checkArduino(){
   }
   Serial.println();
   message[messageLength] = '\0';
+  if(message == "coord request"){
+    UNO.write("{\"id\":145,\"latitude\":14.648696,\"longitude\":121.068517}");
+    Serial.print("{\"id\":145,\"latitude\":14.648696,\"longitude\":121.068517}");
+
+  }
 }
 void loop()
 {
 
     checkArduino();
     // 14.648696 121.068517 DCS
-    UNO.write("{\"latitude\":14.648696,\"longitude\":121.068517}");
-
-    Serial.print("{\"latitude\":14.648696,\"longitude\":121.068517}");
+    
 
     delay(1000);
 }

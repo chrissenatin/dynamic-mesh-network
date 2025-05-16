@@ -1,3 +1,8 @@
+//Notes:
+//Not necessary for MVP but nice to have
+// - Nonblocking
+// - 
+
 #include <ArduinoJson.h>
 #include <math.h>
 
@@ -58,6 +63,7 @@ void createPayload(char *payload, size_t buffer_size, double latitude, double lo
   serializeJson(payload_json, payload, buffer_size);
 }
 
+//00
 void getBroadcastMessage (char *message, double latitude, double longitude) {
   // create 16 bit header - 00(srcID)(destID)
   // 0 type = broadcast
@@ -75,6 +81,7 @@ void getBroadcastMessage (char *message, double latitude, double longitude) {
   // empty payload since we are simply asking for coordinates
 }
 
+//01
 void getBroadcastReply (char *message, uint8_t destination_id, double latitude, double longitude) {
   // create 16 bit header
   // 0 type = broadcast
@@ -102,6 +109,7 @@ void getBroadcastReply (char *message, uint8_t destination_id, double latitude, 
   strcat(message, payload);
 }
 
+//10
 void getDynamiteMessage (char *message, uint8_t destination_id, double latitude, double longitude) {
   // create 16 bit header - 00(srcID)(destID)
   // 1 type = dynamite
@@ -123,6 +131,7 @@ void getDynamiteMessage (char *message, uint8_t destination_id, double latitude,
   strcat(message, payload);
 }
 
+//10
 void getDynamitePass (char *message, char *payload, uint8_t destination_id, double latitude, double longitude) {
   // create 16 bit header - 00(srcID)(destID)
   // 1 type = dynamite
@@ -219,9 +228,46 @@ void checkSpresense(){
     rf95.send((uint8_t *)finalMessage, strlen(finalMessage));
     rf95.waitPacketSent();
 
-    Serial.print("Sent dynamite warning to node ");
-    Serial.println(id);
+    //wait for acknowledgement for 1 second. If walang mareceive, retry once
+    bool isAckReceived = waitForAck();
+    if(!isAckReceived){
+      rf95.send((uint8_t *)finalMessage, strlen(finalMessage));
+      rf95.waitPacketSent();
+    
+    }
+    
+}
+
+bool waitForAck(){
+
+    unsigned long start = millis();
+      while (millis() - start < 1000) {
+
+        //if there's a message, check if the type is acknowledgement
+        if (rf95.available()) {
+          uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
+          uint8_t len = sizeof(buf);
+          if (rf95.recv(buf, &len)) {
+
+            char *msg = (char *)buf;
+
+            // Parse message
+            uint8_t type, reply, source_id, destination_id;
+            char payload[100];
+            parseMessage(msg, &type, &reply, &source_id, &destination_id, payload);
+
+            //if the message is an acknowledgement message and is directed to the node
+            if(type == 3 && destination_id == buoyID){
+              Serial.print("Acknowledgement received.");
+              return true;
+            }
+        }
+      }
+
+      //if no acknowledgement is received, return false
+      return false;
   }
+
 }
 
 void handshake(double latitude, double longitude, uint8_t *destination_id){
@@ -345,6 +391,20 @@ void checkLora() {
 
       case 2: // binary 10
         Serial.println("Type: 10 -> Node was chosen to be next sender");
+
+        //Send acknowledgement to source node
+        char ack[RH_RF95_MAX_MESSAGE_LEN]; 
+        getDynamiteAcknowledge (ack, source_id, buoyID);
+
+        rf95.send((uint8_t *)ack, strlen(ack));
+        rf95.waitPacketSent();
+
+        Serial.print("Sent acknowledgement to node ");
+        Serial.println(source_id);
+
+        
+
+
          // Parse payload to get latitude and longitude
          // Spresense message is same format as other messages, except without id
         double lat, lon;

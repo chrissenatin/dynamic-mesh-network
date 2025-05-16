@@ -23,8 +23,23 @@ void setup()
     UNO.begin(9600);
 }
 
+void checkArduino(){
+    UNO.listen();
+    int messageLength = UNO.available();
+    char message[ARDUINO_MAX_MESSAGE_LEN];
+    for(int ctr = 0; ctr < messageLength; ctr++){
+    // Read data from Spresense
+    message[ctr] = UNO.read();
+    // Print received data to Arduino serial monitor for debugging
+    Serial.print(message[ctr]);
+  }
+  Serial.println();
+  message[messageLength] = '\0';
+}
 void loop()
 {
+
+    checkArduino();
     // 14.648696 121.068517 DCS
     UNO.write("{\"latitude\":14.648696,\"longitude\":121.068517}");
 

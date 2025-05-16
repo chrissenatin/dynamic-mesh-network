@@ -309,7 +309,9 @@ void checkLora() {
     char payload[100];
     parseMessage(message, &type, &reply, &source_id, &destination_id, payload);
 
-    switch (type) {
+    //check if message is for node(if destination ID is broadcast or matches own ID )
+    if(destination_id == source_id || destination_id == buoyID){
+      switch (type) {
       case 0: // binary 00
         Serial.println("Type: 00");
         // Handle case 00
@@ -356,6 +358,9 @@ void checkLora() {
 
     String response = (char *)message;
     Serial.println("Received response: " + response);
+    }
+
+    
   } else {
     Serial.println("Receive failed");
   }

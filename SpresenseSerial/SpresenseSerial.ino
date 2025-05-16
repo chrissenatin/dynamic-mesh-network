@@ -39,6 +39,9 @@ void checkArduino(){
     UNO.write("{\"id\":145,\"latitude\":14.648696,\"longitude\":121.068517}");
     Serial.print("{\"id\":145,\"latitude\":14.648696,\"longitude\":121.068517}");
 
+  } else {
+    Serial.println("message from arduino not processed. message: ");
+    Serial.println(message);
   }
 }
 void loop()

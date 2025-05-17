@@ -237,6 +237,7 @@ void checkSpresense(){
     }
     
 }
+}
 
 bool waitForAck(){
 

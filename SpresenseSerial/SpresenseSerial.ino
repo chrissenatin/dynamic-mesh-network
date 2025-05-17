@@ -28,14 +28,16 @@ void checkArduino(){
     int messageLength = UNO.available();
     char message[100];
     for(int ctr = 0; ctr < messageLength; ctr++){
-    // Read data from Spresense
+    // Read data from Arduino
     message[ctr] = UNO.read();
-    // Print received data to Arduino serial monitor for debugging
+    // Print received data for debugging
     Serial.print(message[ctr]);
   }
   Serial.println();
   message[messageLength] = '\0';
   if(message == "coord request"){
+
+    ///Hardcoded coordinates
     UNO.write("{\"id\":145,\"latitude\":14.648696,\"longitude\":121.068517}");
     Serial.print("{\"id\":145,\"latitude\":14.648696,\"longitude\":121.068517}");
 
@@ -51,5 +53,5 @@ void loop()
     // 14.648696 121.068517 DCS
     
 
-    delay(1000);
+    delay(100);
 }

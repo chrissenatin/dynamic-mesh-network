@@ -186,6 +186,15 @@ void checkLora() {
     char payload[100];
     parseMessage(message, &type, &reply, &source_id, &destination_id, payload);
 
+    //For demonstrating the relay function
+    //you can set ignoreNodeID to the ID of the node you want the gateway to ignore
+    //----------------------
+    uint8_t ignoreNodeID = 140;
+    if(source_id == ignoreNodeID){
+      return;
+    }
+    //----------------------
+
 
     //check if message is meant for node(if destination ID is broadcast or matches own ID )
     if(destination_id == source_id || destination_id == buoyID){

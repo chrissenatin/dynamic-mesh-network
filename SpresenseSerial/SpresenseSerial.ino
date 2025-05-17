@@ -37,7 +37,7 @@ void checkArduino(){
   message[messageLength] = '\0';
   if(message == "coord request"){
 
-    ///Hardcoded coordinates
+    ///Hardcoded coordinates will be sent to arduino
     UNO.write("{\"id\":145,\"latitude\":14.648696,\"longitude\":121.068517}");
     Serial.print("{\"id\":145,\"latitude\":14.648696,\"longitude\":121.068517}");
 

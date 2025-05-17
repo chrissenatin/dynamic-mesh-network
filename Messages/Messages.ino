@@ -330,6 +330,8 @@ void handshake(double latitude, double longitude, uint8_t *destination_id){
       }
 }
 
+
+///get coordinates from spresense
 void getCoordinates(double *latitude, double *longitude){
 
   SPRESENSE.write("coord request");

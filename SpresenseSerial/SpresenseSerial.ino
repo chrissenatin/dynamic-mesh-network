@@ -84,8 +84,6 @@ void setup() {
 
   Serial.println("Start Recorder");                                 
   theAudio->startRecorder(); // Start recording
-
-  MP.begin(subcore); // Start subcore
 }
 
 

@@ -240,10 +240,8 @@ void checkSpresense(){
 }
 
 bool waitForAck(){
-
     unsigned long start = millis();
       while (millis() - start < 1000) {
-
         //if there's a message, check if the type is acknowledgement
         if (rf95.available()) {
           uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];

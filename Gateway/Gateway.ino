@@ -17,6 +17,7 @@ float frequency = 915.0;
 #define SHORE_LAT 14.648696
 #define SHORE_LONG 121.068517
 
+StaticJsonDocument<512> payload_json;
 
 void parseMessage (char *message, uint8_t *type, uint8_t *reply, uint8_t *source_id, uint8_t *destination_id, char *payload){
   // get header from the message and extract info
@@ -33,8 +34,11 @@ void parseMessage (char *message, uint8_t *type, uint8_t *reply, uint8_t *source
 }
 void parsePayload (char *payload, double *latitude, double *longitude, uint8_t *origin_id){
   // Extract payload contents
-  JsonDocument payload_json;
   deserializeJson(payload_json, payload);
+
+  // Serial.println(payload_json["latitude"]);
+  // Serial.println(payload_json["longitude"]);
+  // Serial.println(payload_json["id"]);
   
   *latitude = payload_json["latitude"];   // Will return 0 if none
   *longitude = payload_json["longitude"]; // Will return 0 if none
@@ -68,9 +72,6 @@ void getBroadcastReply (char *message, uint8_t destination_id, double latitude, 
 }
 
 void createPayload(char *payload, size_t buffer_size, double latitude, double longitude){
-  // create payload as Json
-  StaticJsonDocument<128> payload_json;
-
   payload_json["latitude"] = latitude;
   payload_json["longitude"] = longitude;
   payload_json["id"] = buoyID;
@@ -78,30 +79,21 @@ void createPayload(char *payload, size_t buffer_size, double latitude, double lo
   // move JSON to the payload buffer
   serializeJson(payload_json, payload, buffer_size);
 }
-void getDynamiteAcknowledge (char *message, uint8_t destination_id, uint8_t origin_id) {
+void getDynamitePass (char *message, char *payload, uint8_t destination_id) {
   // create 16 bit header - 00(srcID)(destID)
   // 1 type = dynamite
-  // 1 reply = yes
+  // 0 reply = no
   // 7 bits source ID = buoyID
   // 7 bits destination ID = destination_id
 
-  // 1 type 1 reply, set own ID as source and destination ID as given
-  uint16_t header = 49152 | (buoyID << 8) | (destination_id);
+  // 1 type 0 reply, set own ID as source and destination ID as given
+  uint16_t header = 32768 | (buoyID << 7) | (destination_id);
 
   // convert to bitstring
   memcpy(message, &header, 2);
   message[2] = '\0';
 
-  // create and concatenate payload to message
-  char payload[11];
-  // create the JSON file
-  StaticJsonDocument<128> payload_json;
-
-  payload_json["id"] = origin_id;
-
-  // move JSON to the payload buffer
-  serializeJson(payload_json, payload, 11);
-
+  // concatenate original payload to message
   strcat(message, payload);
 }
 
@@ -186,6 +178,8 @@ void checkLora() {
     char payload[100];
     parseMessage(message, &type, &reply, &source_id, &destination_id, payload);
 
+    char replyMessage[64]; // Buffer to hold the reply;
+
     //For demonstrating the relay function
     //you can set ignoreNodeID to the ID of the node you want the gateway to ignore
     //----------------------
@@ -206,11 +200,10 @@ void checkLora() {
         // Handle case 00
         
 
-        //send coordinates as a reply
-        char reply[RH_RF95_MAX_MESSAGE_LEN];            
-        getBroadcastReply (reply, source_id, SHORE_LAT, SHORE_LONG);
+        //send coordinates as a reply          
+        getBroadcastReply (replyMessage, source_id, SHORE_LAT, SHORE_LONG);
 
-        rf95.send(reply, strlen(reply)); // strlen(data));
+        rf95.send(replyMessage, strlen(replyMessage)); // strlen(data));
         rf95.waitPacketSent();
         
         break;
@@ -222,13 +215,12 @@ void checkLora() {
 
 
       case 2: // binary 10
-        Serial.println("Type: 10 -> Node was chosen");
+        Serial.println("Type: 10 -> Node was chosen to be next sender");
 
         //Send acknowledgement to source node
-        char ack[RH_RF95_MAX_MESSAGE_LEN]; 
-        getDynamiteAcknowledge (ack, source_id, buoyID);
+        getDynamitePass(replyMessage, payload, source_id);
 
-        rf95.send((uint8_t *)ack, strlen(ack));
+        rf95.send((uint8_t *)replyMessage, strlen(replyMessage));
         rf95.waitPacketSent();
 
         Serial.print("Sent acknowledgement to node ");

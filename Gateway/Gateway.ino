@@ -65,11 +65,11 @@ void getBroadcastReply (char *message, uint8_t destination_id, double latitude, 
   message[2] = '\0';
 
   // create and concatenate payload to message
-  char payload[55];
-  createPayload(payload, 55, latitude, longitude);
+  char payload[51];
+  createPayload(payload, 51, latitude, longitude);
   
-  if (strlen(payload) < 54){
-    payload[55] = ' '; // pad with a space
+  if (strlen(payload) < 50){
+    payload[51] = ' '; // pad with a space
   }
 
   strcat(message, payload);
@@ -169,21 +169,21 @@ void uploadData(double latitude, double longitude, uint8_t source_id) {//Upload 
 
 void checkLora() {
 
-  char message[57]; // Buffer to hold the incoming message
-  uint8_t len = 57;
+  char message[53]; // Buffer to hold the incoming message
+  uint8_t len = 53;
 
 
   if (rf95.available()) {
     // Successfully received a message
-    rf95.recv(message, 57);
+    rf95.recv(message, 53);
     message[len] = '\0'; // Ensure null-terminated string
 
     //parse message to get message type
     uint8_t type, reply, source_id, destination_id;
-    char payload[55];
+    char payload[51];
     parseMessage(message, &type, &reply, &source_id, &destination_id, payload);
 
-    char replyMessage[57]; // Buffer to hold the reply;
+    char replyMessage[53]; // Buffer to hold the reply;
 
     //For demonstrating the relay function
     //you can set ignoreNodeID to the ID of the node you want the gateway to ignore
@@ -208,7 +208,7 @@ void checkLora() {
         //send coordinates as a reply          
         getBroadcastReply (replyMessage, source_id, SHORE_LAT, SHORE_LONG);
 
-        rf95.send(replyMessage, 57); // send fixed length
+        rf95.send(replyMessage, 53); // send fixed length
         rf95.waitPacketSent();
         
         break;
@@ -225,7 +225,7 @@ void checkLora() {
         //Send acknowledgement to source node
         getDynamitePass(replyMessage, payload, source_id);
 
-        rf95.send((uint8_t *)replyMessage, 57); // send fixed length
+        rf95.send((uint8_t *)replyMessage, 53); // send fixed length
         rf95.waitPacketSent();
 
         Serial.print("Sent acknowledgement to node ");

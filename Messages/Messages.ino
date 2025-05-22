@@ -19,7 +19,7 @@
 
 RH_RF95 rf95(RF95_CS, RF95_INT);
 
-uint8_t buoyID = 2; 
+uint8_t buoyID = 3; 
 
 // Serial communication with Spresense
 const byte rxPin = 4;
@@ -75,7 +75,7 @@ void getBroadcastMessage (char *message) {
   message[2] = '\0';
 
   // arbitrary empty payload since we are simply asking for coordinates
-  char payload[55] = "{\"latitude\":00.000000,\"longitude\":000.000000,\"id\":000}\0";
+  char payload[51] = "{\"latitude\":00.0000,\"longitude\":000.0000,\"id\":000}\0";
 
   strcat(message, payload);
 }
@@ -102,11 +102,11 @@ void getBroadcastReply (char *message, uint8_t destination_id, double latitude, 
   message[2] = '\0';
 
   // create and concatenate payload to message
-  char payload[55];
-  createPayload(payload, 55, latitude, longitude);
+  char payload[51];
+  createPayload(payload, 51, latitude, longitude);
   
-  if (strlen(payload) < 54){
-    payload[55] = ' '; // pad with a space
+  if (strlen(payload) < 50){
+    payload[51] = ' '; // pad with a space
   }
 
   strcat(message, payload);
@@ -128,11 +128,11 @@ void getDynamiteMessage (char *message, uint8_t destination_id, double latitude,
   message[2] = '\0';
 
   // create and concatenate payload to message
-  char payload[55];
-  createPayload(payload, 55, latitude, longitude);
+  char payload[51];
+  createPayload(payload, 51, latitude, longitude);
   
-  if (strlen(payload) < 54){
-    payload[55] = ' '; // pad with a space
+  if (strlen(payload) < 50){
+    payload[51] = ' '; // pad with a space
   }
 
   strcat(message, payload);
@@ -193,8 +193,8 @@ void checkSpresense(){
     Serial.print("checkSpresense: ");
     Serial.println(msg);
   
-    char message[57];
-    msg.toCharArray(message, 57);
+    char message[53];
+    msg.toCharArray(message, 53);
 
     // get latitude and longitude from Spresense data
     double latitude, longitude;
@@ -207,19 +207,19 @@ void checkSpresense(){
     while(notSent){
       handshake(&id);
 
-      char finalMessage[57];
+      char finalMessage[53];
       getDynamiteMessage(finalMessage, 1, latitude, longitude); // set id to proper id
 
       Serial.println(finalMessage);
 
-      bool check = rf95.send((uint8_t *)finalMessage, 57); // send fixed length
+      bool check = rf95.send((uint8_t *)finalMessage, 53); // send fixed length
       bool wait_check = rf95.waitPacketSent();
 
       // Serial.print(check);
       // Serial.println(wait_check);
 
       uint8_t type, reply, source_id, destination_id;
-      char payload[55];
+      char payload[51];
       parseMessage(finalMessage, &type, &reply, &source_id, &destination_id, payload);
       // Serial.print("Type: ");
       // Serial.println(type);
@@ -235,7 +235,7 @@ void checkSpresense(){
       //wait for acknowledgement for 1 second. If walang mareceive, retry once
       bool isAckReceived = waitForAck();
       if(!isAckReceived){
-        rf95.send((uint8_t *)finalMessage, 57); // send fixed length
+        rf95.send((uint8_t *)finalMessage, 53); // send fixed length
         rf95.waitPacketSent();
       } else {
         notSent = false;
@@ -257,7 +257,7 @@ bool waitForAck(){
 
             // Parse message
             uint8_t type, reply, source_id, destination_id;
-            char payload[55];
+            char payload[51];
             parseMessage(msg, &type, &reply, &source_id, &destination_id, payload);
 
             //if the message is an acknowledgement message and is directed to the node
@@ -279,11 +279,11 @@ void handshake(uint8_t *destination_id){
     //ASSUMPTION: All spresense data received in this function is a bomb message
 
     //create broadcast message
-    char message[57];
+    char message[53];
     getBroadcastMessage(message);
     
     //send broadcast message
-    rf95.send(message, 57); // send fixed length
+    rf95.send(message, 53); // send fixed length
     rf95.waitPacketSent();
 
       // --- Block and listen for 1 second ---
@@ -303,7 +303,7 @@ void handshake(uint8_t *destination_id){
 
             // Parse message
             uint8_t type, reply, source_id, destination_id;
-            char payload[55];
+            char payload[51];
             parseMessage(msg, &type, &reply, &source_id, &destination_id, payload);
 
             // Parse payload
@@ -346,8 +346,8 @@ void getCoordinates(double *latitude, double *longitude){
     Serial.print("checkSpresense: ");
     Serial.println(msg);
   
-    char message[55];
-    msg.toCharArray(message, 55);
+    char message[53];
+    msg.toCharArray(message, 53);
 
     double lat, lon;
     uint8_t origin_id;
@@ -359,18 +359,20 @@ void getCoordinates(double *latitude, double *longitude){
 
 void checkLora() {
 
-  char message[57]; // Buffer to hold the incoming message
-  uint8_t len = 57;
+  char message[53]; // Buffer to hold the incoming message
+  uint8_t len = 53;
+  Serial.println(rf95.available());
   if (rf95.available()) {
     // Successfully received a message
-    rf95.recv(message, 57);
+    rf95.recv(message, 53);
     message[len] = '\0'; // Ensure null-terminated string
+    Serial.println(message);
 
     uint8_t type, reply, source_id, destination_id;
-    char payload[55];
+    char payload[51];
     parseMessage(message, &type, &reply, &source_id, &destination_id, payload);
 
-    char replyMessage[57]; // Buffer to hold the reply;
+    char replyMessage[53]; // Buffer to hold the reply;
 
     //check if message is for node(if destination ID is broadcast or matches own ID )
     if(destination_id == source_id || destination_id == buoyID){
@@ -385,8 +387,11 @@ void checkLora() {
         //send coordinates as a reply
         getBroadcastReply (replyMessage, source_id, latitude, longitude); //destination is source of sender
 
-        rf95.send(replyMessage, 57); // send fixed length
+        rf95.send(replyMessage, 53); // send fixed length
         rf95.waitPacketSent();
+
+        Serial.print("reply to broadcast: ");
+        Serial.println(replyMessage);
         
         break;
 
@@ -401,7 +406,7 @@ void checkLora() {
         //Send acknowledgement to source node
         getDynamitePass(replyMessage, payload, source_id);
 
-        rf95.send((uint8_t *)replyMessage, 57); // send fixed length
+        rf95.send((uint8_t *)replyMessage, 53); // send fixed length
         rf95.waitPacketSent();
 
         Serial.print("Sent acknowledgement to node ");
@@ -413,7 +418,7 @@ void checkLora() {
 
         getDynamitePass(replyMessage, payload, destination_id);
 
-        rf95.send((uint8_t *)replyMessage, 57); // send fixed length
+        rf95.send((uint8_t *)replyMessage, 53); // send fixed length
         rf95.waitPacketSent();
 
         Serial.print("Passed dynamite warning to node ");
@@ -436,10 +441,6 @@ void checkLora() {
     }
 
     
-  } else {
-    String response = (char *)message;
-    Serial.println("Received response: " + response);
-    Serial.println("Receive Failed");
   }
 
 

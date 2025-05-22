@@ -208,7 +208,7 @@ void checkLora() {
         //send coordinates as a reply          
         getBroadcastReply (replyMessage, source_id, SHORE_LAT, SHORE_LONG);
 
-        rf95.send(replyMessage, strlen(replyMessage)+1); // +1 to send terminator
+        rf95.send(replyMessage, 57); // send fixed length
         rf95.waitPacketSent();
         
         break;
@@ -225,7 +225,7 @@ void checkLora() {
         //Send acknowledgement to source node
         getDynamitePass(replyMessage, payload, source_id);
 
-        rf95.send((uint8_t *)replyMessage, strlen(replyMessage)+1); // +1 to send terminator
+        rf95.send((uint8_t *)replyMessage, 57); // send fixed length
         rf95.waitPacketSent();
 
         Serial.print("Sent acknowledgement to node ");

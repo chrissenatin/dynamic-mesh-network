@@ -212,7 +212,7 @@ void checkSpresense(){
 
       Serial.println(finalMessage);
 
-      bool check = rf95.send((uint8_t *)finalMessage, strlen(finalMessage));
+      bool check = rf95.send((uint8_t *)finalMessage, strlen(finalMessage)+1); // +1 to send terminator
       bool wait_check = rf95.waitPacketSent();
 
       // Serial.print(check);
@@ -283,7 +283,7 @@ void handshake(uint8_t *destination_id){
     getBroadcastMessage(message);
     
     //send broadcast message
-    rf95.send(message, strlen(message)); // strlen(data);
+    rf95.send(message, strlen(message)+1); // +1 to send terminator
     rf95.waitPacketSent();
 
       // --- Block and listen for 1 second ---
@@ -385,7 +385,7 @@ void checkLora() {
         //send coordinates as a reply
         getBroadcastReply (replyMessage, source_id, latitude, longitude); //destination is source of sender
 
-        rf95.send(replyMessage, strlen(replyMessage)); // strlen(data));
+        rf95.send(replyMessage, strlen(replyMessage)+1); // +1 to send terminator
         rf95.waitPacketSent();
         
         break;
@@ -401,7 +401,7 @@ void checkLora() {
         //Send acknowledgement to source node
         getDynamitePass(replyMessage, payload, source_id);
 
-        rf95.send((uint8_t *)replyMessage, strlen(replyMessage));
+        rf95.send((uint8_t *)replyMessage, strlen(replyMessage)+1); // +1 to send terminator
         rf95.waitPacketSent();
 
         Serial.print("Sent acknowledgement to node ");
@@ -413,7 +413,7 @@ void checkLora() {
 
         getDynamitePass(replyMessage, payload, destination_id);
 
-        rf95.send((uint8_t *)replyMessage, strlen(replyMessage));
+        rf95.send((uint8_t *)replyMessage, strlen(replyMessage)+1); // +1 to send terminator
         rf95.waitPacketSent();
 
         Serial.print("Passed dynamite warning to node ");

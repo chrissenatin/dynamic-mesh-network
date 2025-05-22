@@ -74,7 +74,10 @@ void getBroadcastMessage (char *message) {
   memcpy(message, &header, 2);
   message[2] = '\0';
 
-  // empty payload since we are simply asking for coordinates
+  // arbitrary empty payload since we are simply asking for coordinates
+  char payload[55] = "{\"latitude\":00.000000,\"longitude\":000.000000,\"id\":000}\0";
+
+  strcat(message, payload);
 }
 
 //01
@@ -99,8 +102,12 @@ void getBroadcastReply (char *message, uint8_t destination_id, double latitude, 
   message[2] = '\0';
 
   // create and concatenate payload to message
-  char payload[48];
-  createPayload(payload, 48, latitude, longitude);
+  char payload[55];
+  createPayload(payload, 55, latitude, longitude);
+  
+  if (strlen(payload) < 54){
+    payload[55] = ' '; // pad with a space
+  }
 
   strcat(message, payload);
 }
@@ -121,8 +128,12 @@ void getDynamiteMessage (char *message, uint8_t destination_id, double latitude,
   message[2] = '\0';
 
   // create and concatenate payload to message
-  char payload[64];
-  createPayload(payload, 64, latitude, longitude);
+  char payload[55];
+  createPayload(payload, 55, latitude, longitude);
+  
+  if (strlen(payload) < 54){
+    payload[55] = ' '; // pad with a space
+  }
 
   strcat(message, payload);
 }
@@ -182,8 +193,8 @@ void checkSpresense(){
     Serial.print("checkSpresense: ");
     Serial.println(msg);
   
-    char message[64];
-    msg.toCharArray(message, 64);
+    char message[57];
+    msg.toCharArray(message, 57);
 
     // get latitude and longitude from Spresense data
     double latitude, longitude;
@@ -196,19 +207,19 @@ void checkSpresense(){
     while(notSent){
       handshake(&id);
 
-      char finalMessage[64];
+      char finalMessage[57];
       getDynamiteMessage(finalMessage, 1, latitude, longitude); // set id to proper id
 
       Serial.println(finalMessage);
 
-      bool check = rf95.send((uint8_t *)message, strlen(message));
+      bool check = rf95.send((uint8_t *)finalMessage, strlen(finalMessage));
       bool wait_check = rf95.waitPacketSent();
 
       // Serial.print(check);
       // Serial.println(wait_check);
 
       uint8_t type, reply, source_id, destination_id;
-      char payload[64];
+      char payload[55];
       parseMessage(finalMessage, &type, &reply, &source_id, &destination_id, payload);
       // Serial.print("Type: ");
       // Serial.println(type);
@@ -224,7 +235,7 @@ void checkSpresense(){
       //wait for acknowledgement for 1 second. If walang mareceive, retry once
       bool isAckReceived = waitForAck();
       if(!isAckReceived){
-        rf95.send((uint8_t *)message, strlen(message));
+        rf95.send((uint8_t *)finalMessage, strlen(finalMessage));
         rf95.waitPacketSent();
       } else {
         notSent = false;
@@ -246,7 +257,7 @@ bool waitForAck(){
 
             // Parse message
             uint8_t type, reply, source_id, destination_id;
-            char payload[64];
+            char payload[55];
             parseMessage(msg, &type, &reply, &source_id, &destination_id, payload);
 
             //if the message is an acknowledgement message and is directed to the node
@@ -268,7 +279,7 @@ void handshake(uint8_t *destination_id){
     //ASSUMPTION: All spresense data received in this function is a bomb message
 
     //create broadcast message
-    char message[32];
+    char message[57];
     getBroadcastMessage(message);
     
     //send broadcast message
@@ -292,7 +303,7 @@ void handshake(uint8_t *destination_id){
 
             // Parse message
             uint8_t type, reply, source_id, destination_id;
-            char payload[64];
+            char payload[55];
             parseMessage(msg, &type, &reply, &source_id, &destination_id, payload);
 
             // Parse payload
@@ -328,41 +339,38 @@ void getCoordinates(double *latitude, double *longitude){
 
   SPRESENSE.write("coord request");
   delay(100);
-
-  SPRESENSE.listen();
-  int messageLength = SPRESENSE.available();
-  char message[64];
-  for(int ctr = 0; ctr < messageLength; ctr++){
-    // Read data from Spresense
-    message[ctr] = SPRESENSE.read();
-    // Print received data to Arduino serial monitor for debugging
-    Serial.print(message[ctr]);
-  }
-  Serial.println();
-  message[messageLength] = '\0';
-
-   double lat, lon;
-  uint8_t origin_id;
-  parsePayload(message, &lat, &lon, &origin_id);
-  *latitude = lat;
-  *longitude = lon;
   
-  SPRESENSE.listen();
+  if (SPRESENSE.available()) {
+    String msg = "";
+    msg = SPRESENSE.readStringUntil('\n');
+    Serial.print("checkSpresense: ");
+    Serial.println(msg);
+  
+    char message[55];
+    msg.toCharArray(message, 55);
+
+    double lat, lon;
+    uint8_t origin_id;
+    parsePayload(message, &lat, &lon, &origin_id);
+    *latitude = lat;
+    *longitude = lon;
+  }
 }
 
 void checkLora() {
 
-  char message[64]; // Buffer to hold the incoming message
-  uint8_t len = sizeof(message);
-  if (rf95.recv(message, &len)) {
+  char message[57]; // Buffer to hold the incoming message
+  uint8_t len = 57;
+  if (rf95.available()) {
     // Successfully received a message
-    message[len] = '\0'; // Null-terminate if you want to treat it as a string
+    rf95.recv(message, 57);
+    message[len] = '\0'; // Ensure null-terminated string
 
     uint8_t type, reply, source_id, destination_id;
-    char payload[64];
+    char payload[55];
     parseMessage(message, &type, &reply, &source_id, &destination_id, payload);
 
-    char replyMessage[64]; // Buffer to hold the reply;
+    char replyMessage[57]; // Buffer to hold the reply;
 
     //check if message is for node(if destination ID is broadcast or matches own ID )
     if(destination_id == source_id || destination_id == buoyID){
@@ -403,9 +411,9 @@ void checkLora() {
 
         handshake(destination_id);
 
-        getDynamitePass(message, payload, destination_id);
+        getDynamitePass(replyMessage, payload, destination_id);
 
-        rf95.send((uint8_t *)message, strlen(message));
+        rf95.send((uint8_t *)replyMessage, strlen(replyMessage));
         rf95.waitPacketSent();
 
         Serial.print("Passed dynamite warning to node ");

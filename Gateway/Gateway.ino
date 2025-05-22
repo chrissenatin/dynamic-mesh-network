@@ -65,8 +65,12 @@ void getBroadcastReply (char *message, uint8_t destination_id, double latitude, 
   message[2] = '\0';
 
   // create and concatenate payload to message
-  char payload[48];
-  createPayload(payload, 48, latitude, longitude);
+  char payload[55];
+  createPayload(payload, 55, latitude, longitude);
+  
+  if (strlen(payload) < 54){
+    payload[55] = ' '; // pad with a space
+  }
 
   strcat(message, payload);
 }
@@ -165,20 +169,21 @@ void uploadData(double latitude, double longitude, uint8_t source_id) {//Upload 
 
 void checkLora() {
 
-  char message[RH_RF95_MAX_MESSAGE_LEN]; // Buffer to hold the incoming message
-  uint8_t len = sizeof(message);
+  char message[57]; // Buffer to hold the incoming message
+  uint8_t len = 57;
 
 
-  if (rf95.recv(message, &len)) {
+  if (rf95.available()) {
     // Successfully received a message
-    message[len] = '\0'; 
+    rf95.recv(message, 57);
+    message[len] = '\0'; // Ensure null-terminated string
 
     //parse message to get message type
     uint8_t type, reply, source_id, destination_id;
-    char payload[100];
+    char payload[55];
     parseMessage(message, &type, &reply, &source_id, &destination_id, payload);
 
-    char replyMessage[64]; // Buffer to hold the reply;
+    char replyMessage[57]; // Buffer to hold the reply;
 
     //For demonstrating the relay function
     //you can set ignoreNodeID to the ID of the node you want the gateway to ignore

@@ -1,5 +1,5 @@
 /*
- *  MainAudioAI.ino - Voice command sample using spectrograms
+ *  MainCore.ino - Audio detection with GNSS and MP communication to SubCore
  *  Copyright 2022 Sony Semiconductor Solutions Corporation
  *
  *  This library is free software; you can redistribute it and/or
@@ -23,49 +23,96 @@
 
 #include <Audio.h>
 #include <FFT.h>
+#include <MP.h>
+#include <GNSS.h>
 
 #define FFT_LEN 512
+#define SUBCORE 1
 
-// Initialize FFT with stereo, 512 samples
+// Message IDs for MP communication
+#define MSG_ID_EXPLOSION_DETECTED 1
+#define MSG_ID_SUBCORE_READY 2
+
+// Initialize FFT with mono, 512 samples
 FFTClass<AS_CHANNEL_MONO, FFT_LEN> FFT;
 
 AudioClass* theAudio = AudioClass::getInstance();
 
+// GNSS instance
+SpGnss Gnss;
+
 #include <SDHCI.h>
 SDClass SD;
-File myFile;;
+File myFile;
 
 #include <float.h> // Header defining FLT_MAX, FLT_MIN
 #include <DNNRT.h>
 #define NNB_FILE "model.nnb"
 DNNRT dnnrt;
 
-#include <SoftwareSerial.h>
+// Detection parameters
+struct DetectionData {
+  uint8_t nodeId;
+  float latitude;
+  float longitude;
+};
 
-const byte rxPin = 2;
-const byte txPin = 3;
-static byte ID = 1;
+// Node configuration with default/hardcoded coordinates
+static DetectionData nodeConfig = {
+  .nodeId = 145,
+  .latitude = 14.648696,  // Hardcoded fallback latitude
+  .longitude = 121.068517 // Hardcoded fallback longitude
+};
 
-// Set up a new SoftwareSerial object   
-SoftwareSerial UNO (rxPin, txPin);
-
+// GNSS update flag
+bool gnssReady = false;
 
 void setup() {
   Serial.begin(115200);
-  UNO.begin(9600);
-  while (!SD.begin()) {Serial.println("insert SD card");}  
+  
+  // Initialize GNSS
+  Gnss.begin();
+  Gnss.select(GPS);
+  Gnss.start(COLD_START);
+  Serial.println("GNSS started, waiting for fix...");
+  
+  // Boot SubCore 1
+  int ret = MP.begin(SUBCORE);
+  if (ret < 0) {
+    Serial.println("MP.begin error: " + String(ret));
+  } else {
+    Serial.println("SubCore 1 booted successfully");
+  }
+  
+  // Wait for SubCore to be ready
+  int8_t msgid;
+  uint32_t msgdata;
+  Serial.println("Waiting for SubCore to be ready...");
+  ret = MP.Recv(&msgid, &msgdata, SUBCORE);
+  if (ret < 0) {
+    Serial.println("MP.Recv error: " + String(ret));
+  } else if (msgid == MSG_ID_SUBCORE_READY) {
+    Serial.println("SubCore is ready!");
+  }
+  
+  while (!SD.begin()) {
+    Serial.println("Insert SD card");
+    delay(1000);
+  }
+  
   File nnbfile = SD.open(NNB_FILE);
   if (!nnbfile) {
     Serial.println(String(NNB_FILE) + " not found");
     return;
   }
-  int ret = dnnrt.begin(nnbfile);
+  
+  ret = dnnrt.begin(nnbfile);
   if (ret < 0) {
     Serial.println("DNNRT initialization error");
     return;
   }
 
-  // Hamming window, stereo, 50% overlap  
+  // Hamming window, mono, 50% overlap  
   FFT.begin(WindowHamming, AS_CHANNEL_MONO, (FFT_LEN/2));
   
   Serial.println("Init Audio Recorder");
@@ -74,10 +121,10 @@ void setup() {
   theAudio->setRecorderMode(AS_SETRECDR_STS_INPUTDEVICE_MIC);
   // Recording settings: format is PCM (16-bit RAW data),
   // Specify the location of the DSP codec (BIN directory on the SD card),
-  // Sampling rate 16000Hz, stereo input   
+  // Sampling rate 16000Hz, mono input   
   int err = theAudio->initRecorder(AS_CODECTYPE_PCM, 
     "/mnt/sd0/BIN", AS_SAMPLINGRATE_16000, AS_CHANNEL_MONO);
-    if (err != AUDIOLIB_ECODE_OK) {
+  if (err != AUDIOLIB_ECODE_OK) {
     Serial.println("Recorder initialize error");
     while(1);
   }
@@ -86,6 +133,27 @@ void setup() {
   theAudio->startRecorder(); // Start recording
 }
 
+void updateGNSS() {
+  // Check GNSS
+  if (Gnss.waitUpdate(-1)) {
+    SpNavData navData;
+    Gnss.getNavData(&navData);
+    
+    if (navData.posDataExist && navData.posFixMode != FixInvalid) {
+      nodeConfig.latitude = navData.latitude;
+      nodeConfig.longitude = navData.longitude;
+      
+      if (!gnssReady) {
+        gnssReady = true;
+        Serial.println("GNSS fix acquired!");
+        Serial.print("Position: ");
+        Serial.print(nodeConfig.latitude, 6);
+        Serial.print(", ");
+        Serial.println(nodeConfig.longitude, 6);
+      }
+    }
+  }
+}
 
 void loop() {
   static const uint32_t buffering_time = 
@@ -93,9 +161,12 @@ void loop() {
   static const uint32_t buffer_size = 
       FFT_LEN*sizeof(int16_t)*AS_CHANNEL_MONO;
   static char buff[buffer_size]; // Buffer to store audio data
-  static float pDst[FFT_LEN];  // Buffer to store the difference between MIC-A and MIC-B
+  static float pDst[FFT_LEN];  // Buffer to store FFT result
   uint32_t read_size; 
   int ret;
+
+  // Update GNSS position
+  updateGNSS();
 
   // Store the requested data in buff with buffer_size
   // The amount of data that could be read is set in read_size
@@ -114,7 +185,7 @@ void loop() {
   } 
   
   FFT.put((q15_t*)buff, FFT_LEN); // Execute FFT
-  FFT.get(pDst, 0);  // Data for MIC-A (for voice) is at index 0
+  FFT.get(pDst, 0);  // Get FFT result
   
   averageSmooth(pDst); // Smooth the data
 
@@ -157,10 +228,9 @@ void loop() {
     else if (t >= frames*3/4) post_area += hist[t];
   }
 
-  int index = -1; // Recognition result to be passed to the subcore
-  float value = -1; // Confidence of the recognition result to be passed to the subcore
-  // Check if the first and last 250ms are below the silence threshold
-  // and the middle 500ms is above the sound threshold
+  int index = -1; // Recognition result
+  float value = -1; // Confidence of the recognition result
+  // Check if the middle 500ms is above the sound threshold
   if (target_area >= sound_th) {
     // Reset the histogram to avoid multiple detections
     memset(hist, 0, frames*sizeof(float)); 
@@ -207,18 +277,34 @@ void loop() {
     index = output.maxIndex();
     value = output[index];
 
-    if (value > 0.9) {
-      // Harcoded coordinates
-      UNO.write("{\"id\":145,\"latitude\":14.648696,\"longitude\":121.068517}");
+    if (value > 0.9 && index == 0) { // 0 is "explosion"
+      Serial.println("Explosion detected! Confidence: " + String(value));
+      Serial.print("Location: ");
+      Serial.print(nodeConfig.latitude, 6);
+      Serial.print(", ");
+      Serial.println(nodeConfig.longitude, 6);
+      
+      if (!gnssReady) {
+        Serial.println("Using hardcoded coordinates (GNSS not ready)");
+      }
+      
+      // Send message to SubCore
+      // Convert virtual address to physical address for SubCore
+      uint32_t physAddr = (uint32_t)MP.Virt2Phys(&nodeConfig);
+      ret = MP.Send(MSG_ID_EXPLOSION_DETECTED, physAddr, SUBCORE);
+      if (ret < 0) {
+        Serial.println("MP.Send error: " + String(ret));
+      } else {
+        Serial.println("Detection sent to SubCore");
+      }
 
-      // Wait for 10 seconds
+      // Wait for 10 seconds before next detection
       delay(10000);
     }
 
     theAudio->startRecorder(); // Resume the recorder
   }
 }
-
 
 void averageSmooth(float* dst) {
   const int array_size = 4;

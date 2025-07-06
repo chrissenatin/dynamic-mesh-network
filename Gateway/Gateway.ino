@@ -6,12 +6,20 @@
 #include <SPI.h>
 #include <RH_RF95.h>
 #include <Process.h>
+#include <ArduinoJson.h>
 
 // Singleton instance of the radio driver
 RH_RF95 rf95;
 
 int led = A2;
 float frequency = 915.0;
+
+// Gateway address (0xFE is typically used for gateways in LoRaMesh)
+#define buoyID 0xFE
+
+// LoRaMesh protocol constants
+#define LORAMESH_BROADCAST_ADDRESS 0xFF
+#define LORAMESH_MAX_HOPS 10
 
 
 #define SHORE_LAT 14.648696
@@ -33,12 +41,67 @@ void parseMessage (char *message, uint8_t *type, uint8_t *reply, uint8_t *source
 }
 void parsePayload (char *payload, double *latitude, double *longitude, uint8_t *origin_id){
   // Extract payload contents
-  JsonDocument payload_json;
+  StaticJsonDocument<256> payload_json;
   deserializeJson(payload_json, payload);
   
   *latitude = payload_json["latitude"];   // Will return 0 if none
   *longitude = payload_json["longitude"]; // Will return 0 if none
   *origin_id = payload_json["id"];
+}
+
+void parseLoRaMeshMessage(uint8_t *message, uint8_t len, uint8_t *source, uint8_t *destination, char *payload) {
+  // LoRaMesh message format:
+  // Byte 0: Destination
+  // Byte 1: Source
+  // Byte 2: Message ID
+  // Byte 3: Message Type (0x00 for data)
+  // Byte 4: Hop Count
+  // Byte 5: Visited Count
+  // Byte 6-N: Visited Nodes (variable length based on visited count)
+  // Byte N+1: Next Hop
+  // Byte N+2: Data Length
+  // Byte N+3 onwards: Data
+  
+  if (len < 8) return; // Minimum header size
+  
+  *destination = message[0];
+  *source = message[1];
+  uint8_t messageType = message[3];
+  uint8_t visitedCount = message[5];
+  
+  // Skip to data section
+  uint8_t dataOffset = 6 + visitedCount + 2; // header + visited nodes + next hop + data length
+  
+  if (dataOffset >= len) return;
+  
+  uint8_t dataLen = message[dataOffset - 1];
+  
+  if (dataOffset + dataLen > len) return;
+  
+  // Copy the data payload
+  memcpy(payload, &message[dataOffset], dataLen);
+  payload[dataLen] = '\0';
+}
+
+void sendLoRaMeshAck(uint8_t destination) {
+  // Send a simple acknowledgment in LoRaMesh format
+  uint8_t ackMessage[20];
+  
+  // Build LoRaMesh header
+  ackMessage[0] = destination;  // Destination
+  ackMessage[1] = buoyID;       // Source (gateway)
+  ackMessage[2] = random(255);  // Message ID
+  ackMessage[3] = 0x00;         // Message Type (data)
+  ackMessage[4] = 0;            // Hop Count
+  ackMessage[5] = 0;            // Visited Count
+  ackMessage[6] = destination;  // Next Hop (direct)
+  ackMessage[7] = 4;            // Data Length
+  
+  // Simple ACK payload
+  memcpy(&ackMessage[8], "ACK\0", 4);
+  
+  rf95.send(ackMessage, 12);
+  rf95.waitPacketSent();
 }
 void getBroadcastReply (char *message, uint8_t destination_id, double latitude, double longitude) {
   // create 16 bit header
@@ -152,7 +215,7 @@ void uploadData(double latitude, double longitude, uint8_t source_id) {//Upload 
   p.addParameter("Content-Type: application/json");
 
   p.addParameter("-d");
-  p.addParameter("{\"buoy_id\": " + String(source_id)+ ", \"latitude\": " + String(latitude, 24) + ", \"longitude\": " String(longitude, 24) + "}");
+  p.addParameter("{\"buoy_id\": " + String(source_id)+ ", \"latitude\": " + String(latitude, 24) + ", \"longitude\": " + String(longitude, 24) + "}");
   
   p.run();    // Run the process and wait for its termination
 
@@ -173,7 +236,7 @@ void uploadData(double latitude, double longitude, uint8_t source_id) {//Upload 
 
 void checkLora() {
 
-  char message[RH_RF95_MAX_MESSAGE_LEN]; // Buffer to hold the incoming message
+  uint8_t message[RH_RF95_MAX_MESSAGE_LEN]; // Buffer to hold the incoming message
   uint8_t len = sizeof(message);
 
 
@@ -181,10 +244,52 @@ void checkLora() {
     // Successfully received a message
     message[len] = '\0'; 
 
+    // Check if this is a LoRaMesh message
+    bool isLoRaMesh = false;
+    if (len >= 8) {
+      // Check if message type byte (position 3) is valid LoRaMesh type (0x00-0x03)
+      uint8_t msgType = message[3];
+      if (msgType <= 0x03 && message[5] <= LORAMESH_MAX_HOPS) {
+        isLoRaMesh = true;
+      }
+    }
+
+    if (isLoRaMesh) {
+      // Handle LoRaMesh protocol message
+      uint8_t source_id, destination_id;
+      char payload[256];
+      parseLoRaMeshMessage(message, len, &source_id, &destination_id, payload);
+      
+      Console.print("LoRaMesh message from node ");
+      Console.print(source_id);
+      Console.print(" to ");
+      Console.println(destination_id);
+      Console.print("Payload: ");
+      Console.println(payload);
+      
+      // Check if message is for gateway
+      if (destination_id == buoyID || destination_id == LORAMESH_BROADCAST_ADDRESS) {
+        // Parse JSON payload
+        double lat, lon;
+        uint8_t origin_id;
+        parsePayload(payload, &lat, &lon, &origin_id);
+        
+        // Send acknowledgment
+        sendLoRaMeshAck(source_id);
+        Console.print("Sent LoRaMesh ACK to node ");
+        Console.println(source_id);
+        
+        // Upload data
+        uploadData(lat, lon, origin_id);
+      }
+      return;
+    }
+
+    // Original protocol handling
     //parse message to get message type
     uint8_t type, reply, source_id, destination_id;
     char payload[100];
-    parseMessage(message, &type, &reply, &source_id, &destination_id, payload);
+    parseMessage((char*)message, &type, &reply, &source_id, &destination_id, payload);
 
     //For demonstrating the relay function
     //you can set ignoreNodeID to the ID of the node you want the gateway to ignore
@@ -253,15 +358,9 @@ void checkLora() {
         Serial.println(type);
         break;
     }
-    String response = (char *)message;
-    Serial.println("Received response: " + response);
     }
 
     
-  } else {
-    String response = (char *)message;
-    Serial.println("Received response: " + response);
-    Serial.println("Receive Failed");
   }
 }
 

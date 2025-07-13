@@ -1,5 +1,5 @@
 /*
- *  MainCore.ino - Audio detection with GNSS and MP communication to SubCore
+ *  SingleCore.ino - Audio detection with GNSS and direct LoRa mesh communication
  *  Copyright 2022 Sony Semiconductor Solutions Corporation
  *
  *  This library is free software; you can redistribute it and/or
@@ -23,15 +23,29 @@
 
 #include <Audio.h>
 #include <FFT.h>
-#include <MP.h>
 #include <GNSS.h>
+#include <SPI.h>
+#include <LoRaMesh.h>
+#include <SDHCI.h>
+#include <float.h>
+#include <DNNRT.h>
 
 #define FFT_LEN 512
-#define SUBCORE 1
+#define NNB_FILE "model.nnb"
 
-// Message IDs for MP communication
-#define MSG_ID_EXPLOSION_DETECTED 1
-#define MSG_ID_SUBCORE_READY 2
+// LoRa pins
+const int csPin = 18;
+const int resetPin = 26;
+const int irqPin = 25;
+
+// LoRaMesh instance
+LoRaMesh mesh;
+
+// This node's address in the mesh
+uint8_t myAddress = 0x01;
+
+// Gateway address
+const uint8_t gatewayAddress = 0xFE;
 
 // Initialize FFT with mono, 512 samples
 FFTClass<AS_CHANNEL_MONO, FFT_LEN> FFT;
@@ -41,13 +55,8 @@ AudioClass* theAudio = AudioClass::getInstance();
 // GNSS instance
 SpGnss Gnss;
 
-#include <SDHCI.h>
 SDClass SD;
 File myFile;
-
-#include <float.h> // Header defining FLT_MAX, FLT_MIN
-#include <DNNRT.h>
-#define NNB_FILE "model.nnb"
 DNNRT dnnrt;
 
 // Detection parameters
@@ -67,8 +76,15 @@ static DetectionData nodeConfig = {
 // GNSS update flag
 bool gnssReady = false;
 
+// Function prototypes
+void updateGNSS();
+void averageSmooth(float* dst);
+void sendExplosionDetection(const DetectionData& detection);
+void processLoRaMessages();
+
 void setup() {
   Serial.begin(115200);
+  Serial.println("SingleCore started - Direct LoRa implementation");
   
   // Initialize GNSS
   Gnss.begin();
@@ -76,37 +92,34 @@ void setup() {
   Gnss.start(COLD_START);
   Serial.println("GNSS started, waiting for fix...");
   
-  // Boot SubCore 1
-  int ret = MP.begin(SUBCORE);
-  if (ret < 0) {
-    Serial.println("MP.begin error: " + String(ret));
-  } else {
-    Serial.println("SubCore 1 booted successfully");
+  // Configure LoRa pins
+  mesh.setPins(csPin, resetPin, irqPin);
+  mesh.setSPI(SPI5);
+  
+  // Initialize LoRaMesh at 915MHz
+  if (!mesh.begin(915E6, myAddress)) {
+    Serial.println("Starting LoRa Mesh failed!");
+    while (1);
   }
   
-  // Wait for SubCore to be ready
-  int8_t msgid;
-  uint32_t msgdata;
-  Serial.println("Waiting for SubCore to be ready...");
-  ret = MP.Recv(&msgid, &msgdata, SUBCORE);
-  if (ret < 0) {
-    Serial.println("MP.Recv error: " + String(ret));
-  } else if (msgid == MSG_ID_SUBCORE_READY) {
-    Serial.println("SubCore is ready!");
-  }
+  Serial.println("LoRa Mesh initialized successfully");
+  Serial.print("Node address: 0x");
+  Serial.println(myAddress, HEX);
   
+  // Initialize SD card
   while (!SD.begin()) {
     Serial.println("Insert SD card");
     delay(1000);
   }
   
+  // Load neural network model
   File nnbfile = SD.open(NNB_FILE);
   if (!nnbfile) {
     Serial.println(String(NNB_FILE) + " not found");
     return;
   }
   
-  ret = dnnrt.begin(nnbfile);
+  int ret = dnnrt.begin(nnbfile);
   if (ret < 0) {
     Serial.println("DNNRT initialization error");
     return;
@@ -131,6 +144,8 @@ void setup() {
 
   Serial.println("Start Recorder");                                 
   theAudio->startRecorder(); // Start recording
+  
+  Serial.println("System ready!");
 }
 
 void updateGNSS() {
@@ -155,6 +170,58 @@ void updateGNSS() {
   }
 }
 
+void sendExplosionDetection(const DetectionData& detection) {
+  // Format message as JSON
+  char message[128];
+  snprintf(message, sizeof(message), 
+    "{\"id\":%d,\"latitude\":%.6f,\"longitude\":%.6f}", 
+    detection.nodeId, detection.latitude, detection.longitude);
+  
+  Serial.print("Sending to gateway: ");
+  Serial.println(message);
+  
+  // Send to gateway via LoRa mesh
+  if (mesh.sendToWait(gatewayAddress, (uint8_t*)message, strlen(message))) {
+    Serial.println("Message sent to gateway successfully");
+  } else {
+    Serial.println("Failed to send message to gateway");
+    // Fallback: try broadcast if gateway is unreachable
+    if (mesh.sendToWait(LORAMESH_BROADCAST_ADDRESS, (uint8_t*)message, strlen(message))) {
+      Serial.println("Fallback: Message broadcast successfully");
+    } else {
+      Serial.println("Fallback broadcast also failed");
+    }
+  }
+}
+
+void processLoRaMessages() {
+  // Check for incoming LoRa messages
+  uint8_t buf[LORAMESH_MAX_MESSAGE_LEN];
+  uint8_t len = sizeof(buf);
+  uint8_t source, dest, id;
+  
+  if (mesh.recvFromAck(buf, &len, &source, &dest, &id)) {
+    Serial.println("=== LoRa Message Received ===");
+    Serial.print("From: 0x");
+    Serial.println(source, HEX);
+    Serial.print("To: 0x");
+    Serial.println(dest, HEX);
+    Serial.print("ID: ");
+    Serial.println(id);
+    Serial.print("Message: ");
+    
+    // Null-terminate the message for printing
+    buf[len] = '\0';
+    Serial.println((char*)buf);
+    Serial.println("============================");
+    
+    // Check if this is an acknowledgment from gateway
+    if (source == gatewayAddress) {
+      Serial.println("Received acknowledgment from gateway");
+    }
+  }
+}
+
 void loop() {
   static const uint32_t buffering_time = 
       FFT_LEN*1000/AS_SAMPLINGRATE_16000;
@@ -167,6 +234,10 @@ void loop() {
 
   // Update GNSS position
   updateGNSS();
+  
+  // Process LoRa mesh network and check for messages
+  mesh.process();
+  processLoRaMessages();
 
   // Store the requested data in buff with buffer_size
   // The amount of data that could be read is set in read_size
@@ -288,15 +359,8 @@ void loop() {
         Serial.println("Using hardcoded coordinates (GNSS not ready)");
       }
       
-      // Send message to SubCore
-      // Convert virtual address to physical address for SubCore
-      uint32_t physAddr = (uint32_t)MP.Virt2Phys(&nodeConfig);
-      ret = MP.Send(MSG_ID_EXPLOSION_DETECTED, physAddr, SUBCORE);
-      if (ret < 0) {
-        Serial.println("MP.Send error: " + String(ret));
-      } else {.
-        Serial.println("Detection sent to SubCore");
-      }
+      // Send detection via LoRa
+      sendExplosionDetection(nodeConfig);
 
       // Wait for 10 seconds before next detection
       delay(10000);

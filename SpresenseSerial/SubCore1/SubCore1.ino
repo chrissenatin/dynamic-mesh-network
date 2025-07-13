@@ -71,7 +71,7 @@ void setup() {
   MPLog("LoRa Mesh initialized successfully\n");
   
   // Send ready message to MainCore
-  int ret = MP.Send(MSG_ID_SUBCORE_READY, 0);
+  int ret = MP.Send(MSG_ID_SUBCORE_READY, (uint32_t)0);
   if (ret < 0) {
     MPLog("Failed to send ready message: %d\n", ret);
   } else {

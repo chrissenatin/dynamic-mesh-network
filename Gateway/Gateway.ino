@@ -20,6 +20,14 @@ float frequency = 915.0;
 // LoRaMesh protocol constants
 #define LORAMESH_BROADCAST_ADDRESS 0xFF
 #define LORAMESH_MAX_HOPS 10
+#define LORAMESH_MAX_MESSAGE_LEN 251
+
+// Message Types
+#define MESSAGE_TYPE_DATA 0x00
+#define MESSAGE_TYPE_ROUTE_REQUEST 0x01
+#define MESSAGE_TYPE_ROUTE_REPLY 0x02
+#define MESSAGE_TYPE_ROUTE_FAILURE 0x03
+#define MESSAGE_TYPE_ACK 0x04
 
 
 #define SHORE_LAT 14.648696
@@ -49,12 +57,12 @@ void parsePayload (char *payload, double *latitude, double *longitude, uint8_t *
   *origin_id = payload_json["id"];
 }
 
-void parseLoRaMeshMessage(uint8_t *message, uint8_t len, uint8_t *source, uint8_t *destination, char *payload) {
+void parseLoRaMeshMessage(uint8_t *message, uint8_t len, uint8_t *source, uint8_t *destination, uint8_t *messageType, char *payload) {
   // LoRaMesh message format:
   // Byte 0: Destination
   // Byte 1: Source
   // Byte 2: Message ID
-  // Byte 3: Message Type (0x00 for data)
+  // Byte 3: Message Type
   // Byte 4: Hop Count
   // Byte 5: Visited Count
   // Byte 6-N: Visited Nodes (variable length based on visited count)
@@ -66,7 +74,7 @@ void parseLoRaMeshMessage(uint8_t *message, uint8_t len, uint8_t *source, uint8_
   
   *destination = message[0];
   *source = message[1];
-  uint8_t messageType = message[3];
+  *messageType = message[3];
   uint8_t visitedCount = message[5];
   
   // Skip to data section
@@ -79,28 +87,30 @@ void parseLoRaMeshMessage(uint8_t *message, uint8_t len, uint8_t *source, uint8_
   if (dataOffset + dataLen > len) return;
   
   // Copy the data payload
-  memcpy(payload, &message[dataOffset], dataLen);
-  payload[dataLen] = '\0';
+  if (dataLen > 0) {
+    memcpy(payload, &message[dataOffset], dataLen);
+    payload[dataLen] = '\0';
+  } else {
+    payload[0] = '\0';
+  }
 }
 
-void sendLoRaMeshAck(uint8_t destination) {
-  // Send a simple acknowledgment in LoRaMesh format
+void sendLoRaMeshAck(uint8_t destination, uint8_t messageId) {
+  // Send acknowledgment in LoRaMesh format using MESSAGE_TYPE_ACK
   uint8_t ackMessage[20];
+  uint8_t pos = 0;
   
   // Build LoRaMesh header
-  ackMessage[0] = destination;  // Destination
-  ackMessage[1] = buoyID;       // Source (gateway)
-  ackMessage[2] = random(255);  // Message ID
-  ackMessage[3] = 0x00;         // Message Type (data)
-  ackMessage[4] = 0;            // Hop Count
-  ackMessage[5] = 0;            // Visited Count
-  ackMessage[6] = destination;  // Next Hop (direct)
-  ackMessage[7] = 4;            // Data Length
+  ackMessage[pos++] = destination;      // Destination
+  ackMessage[pos++] = buoyID;          // Source (gateway)
+  ackMessage[pos++] = messageId;       // Use original message ID for ACK
+  ackMessage[pos++] = MESSAGE_TYPE_ACK; // Message Type ACK
+  ackMessage[pos++] = 0;               // Hop Count
+  ackMessage[pos++] = 0;               // Visited Count (no visited nodes)
+  ackMessage[pos++] = destination;     // Next Hop (direct)
+  ackMessage[pos++] = 0;               // Data Length (ACK has no payload)
   
-  // Simple ACK payload
-  memcpy(&ackMessage[8], "ACK\0", 4);
-  
-  rf95.send(ackMessage, 12);
+  rf95.send(ackMessage, pos);
   rf95.waitPacketSent();
 }
 void getBroadcastReply (char *message, uint8_t destination_id, double latitude, double longitude) {
@@ -247,40 +257,81 @@ void checkLora() {
     // Check if this is a LoRaMesh message
     bool isLoRaMesh = false;
     if (len >= 8) {
-      // Check if message type byte (position 3) is valid LoRaMesh type (0x00-0x03)
+      // Check if message type byte (position 3) is valid LoRaMesh type (0x00-0x04)
       uint8_t msgType = message[3];
-      if (msgType <= 0x03 && message[5] <= LORAMESH_MAX_HOPS) {
+      if (msgType <= MESSAGE_TYPE_ACK && message[5] <= LORAMESH_MAX_HOPS) {
         isLoRaMesh = true;
       }
     }
 
     if (isLoRaMesh) {
       // Handle LoRaMesh protocol message
-      uint8_t source_id, destination_id;
+      uint8_t source_id, destination_id, messageType;
+      uint8_t messageId = message[2]; // Extract message ID for ACK
       char payload[256];
-      parseLoRaMeshMessage(message, len, &source_id, &destination_id, payload);
+      parseLoRaMeshMessage(message, len, &source_id, &destination_id, &messageType, payload);
       
-      Console.print("LoRaMesh message from node ");
-      Console.print(source_id);
-      Console.print(" to ");
-      Console.println(destination_id);
-      Console.print("Payload: ");
-      Console.println(payload);
+      Console.print("LoRaMesh ");
+      switch(messageType) {
+        case MESSAGE_TYPE_DATA:
+          Console.print("DATA");
+          break;
+        case MESSAGE_TYPE_ROUTE_REQUEST:
+          Console.print("ROUTE_REQUEST");
+          break;
+        case MESSAGE_TYPE_ROUTE_REPLY:
+          Console.print("ROUTE_REPLY");
+          break;
+        case MESSAGE_TYPE_ROUTE_FAILURE:
+          Console.print("ROUTE_FAILURE");
+          break;
+        case MESSAGE_TYPE_ACK:
+          Console.print("ACK");
+          break;
+        default:
+          Console.print("UNKNOWN");
+      }
+      Console.print(" from node 0x");
+      Console.print(source_id, HEX);
+      Console.print(" to 0x");
+      Console.println(destination_id, HEX);
       
       // Check if message is for gateway
       if (destination_id == buoyID || destination_id == LORAMESH_BROADCAST_ADDRESS) {
-        // Parse JSON payload
-        double lat, lon;
-        uint8_t origin_id;
-        parsePayload(payload, &lat, &lon, &origin_id);
-        
-        // Send acknowledgment
-        sendLoRaMeshAck(source_id);
-        Console.print("Sent LoRaMesh ACK to node ");
-        Console.println(source_id);
-        
-        // Upload data
-        uploadData(lat, lon, origin_id);
+        switch(messageType) {
+          case MESSAGE_TYPE_DATA:
+            Console.print("Payload: ");
+            Console.println(payload);
+            
+            // Parse JSON payload
+            double lat, lon;
+            uint8_t origin_id;
+            parsePayload(payload, &lat, &lon, &origin_id);
+            
+            // Send acknowledgment
+            sendLoRaMeshAck(source_id, messageId);
+            Console.print("Sent LoRaMesh ACK to node 0x");
+            Console.println(source_id, HEX);
+            
+            // Upload data if we have valid coordinates
+            if (lat != 0 && lon != 0) {
+              uploadData(lat, lon, origin_id);
+            }
+            break;
+            
+          case MESSAGE_TYPE_ROUTE_REQUEST:
+            // Gateway doesn't need to respond to route requests as it's always reachable
+            Console.println("Ignoring ROUTE_REQUEST at gateway");
+            break;
+            
+          case MESSAGE_TYPE_ACK:
+            Console.println("Received ACK");
+            break;
+            
+          default:
+            Console.println("Unhandled message type");
+            break;
+        }
       }
       return;
     }

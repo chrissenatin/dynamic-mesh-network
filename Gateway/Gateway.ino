@@ -6,7 +6,6 @@
 #include <SPI.h>
 #include <RH_RF95.h>
 #include <Process.h>
-#include <ArduinoJson.h>
 
 // Singleton instance of the radio driver
 RH_RF95 rf95;
@@ -19,7 +18,7 @@ float frequency = 915.0;
 
 // LoRaMesh protocol constants
 #define LORAMESH_BROADCAST_ADDRESS 0xFF
-#define LORAMESH_MAX_HOPS 10
+#define LORAMESH_MAX_HOPS 8
 #define LORAMESH_MAX_MESSAGE_LEN 251
 
 // Message Types
@@ -47,14 +46,58 @@ void parseMessage (char *message, uint8_t *type, uint8_t *reply, uint8_t *source
   // strlen(message+2)+1 to include null terminator
   memmove(payload, message+2, strlen(message+2)+1);
 }
+// Optimized JSON parsing using saved pointers
 void parsePayload (char *payload, double *latitude, double *longitude, uint8_t *origin_id){
-  // Extract payload contents
-  StaticJsonDocument<256> payload_json;
-  deserializeJson(payload_json, payload);
+  // Initialize default values
+  *latitude = 0.0;
+  *longitude = 0.0;
+  *origin_id = 0;
   
-  *latitude = payload_json["latitude"];   // Will return 0 if none
-  *longitude = payload_json["longitude"]; // Will return 0 if none
-  *origin_id = payload_json["id"];
+  // Parse the entire JSON payload once using a single pass
+  char *ptr = payload;
+  
+  // Skip opening brace
+  while (*ptr && *ptr != '{') ptr++;
+  if (!*ptr) return;
+  ptr++;
+  
+  // Parse key-value pairs
+  while (*ptr && *ptr != '}') {
+    // Skip whitespace and commas
+    while (*ptr && (*ptr == ' ' || *ptr == '\t' || *ptr == ',')) ptr++;
+    if (!*ptr || *ptr == '}') break;
+    
+    // Find key
+    if (*ptr == '"') {
+      ptr++; // Skip opening quote
+      char *keyStart = ptr;
+      
+      // Find end of key
+      while (*ptr && *ptr != '"') ptr++;
+      if (!*ptr) return;
+      
+      size_t keyLen = ptr - keyStart;
+      ptr++; // Skip closing quote
+      
+      // Skip whitespace and colon
+      while (*ptr && (*ptr == ' ' || *ptr == '\t' || *ptr == ':')) ptr++;
+      if (!*ptr) return;
+      
+      // Parse value based on key
+      if (keyLen == 8 && strncmp(keyStart, "latitude", 8) == 0) {
+        *latitude = atof(ptr);
+      } else if (keyLen == 9 && strncmp(keyStart, "longitude", 9) == 0) {
+        *longitude = atof(ptr);
+      } else if (keyLen == 2 && strncmp(keyStart, "id", 2) == 0) {
+        *origin_id = (uint8_t)atoi(ptr);
+      }
+      
+      // Skip to next key-value pair or end
+      while (*ptr && *ptr != ',' && *ptr != '}') ptr++;
+    } else {
+      ptr++; // Skip unexpected character
+    }
+  }
 }
 
 void parseLoRaMeshMessage(uint8_t *message, uint8_t len, uint8_t *source, uint8_t *destination, uint8_t *messageType, char *payload) {
@@ -70,12 +113,22 @@ void parseLoRaMeshMessage(uint8_t *message, uint8_t len, uint8_t *source, uint8_
   // Byte N+2: Data Length
   // Byte N+3 onwards: Data
   
+  // Initialize output parameters
+  *destination = 0;
+  *source = 0;
+  *messageType = 0;
+  payload[0] = '\0';
+  
   if (len < 8) return; // Minimum header size
   
   *destination = message[0];
   *source = message[1];
   *messageType = message[3];
+  uint8_t hopCount = message[4];
   uint8_t visitedCount = message[5];
+  
+  // Validate hop count and visited count against library limits
+  if (hopCount > LORAMESH_MAX_HOPS || visitedCount > LORAMESH_MAX_HOPS) return;
   
   // Skip to data section
   uint8_t dataOffset = 6 + visitedCount + 2; // header + visited nodes + next hop + data length
@@ -84,7 +137,8 @@ void parseLoRaMeshMessage(uint8_t *message, uint8_t len, uint8_t *source, uint8_
   
   uint8_t dataLen = message[dataOffset - 1];
   
-  if (dataOffset + dataLen > len) return;
+  // Validate data length
+  if (dataLen > LORAMESH_MAX_MESSAGE_LEN || dataOffset + dataLen > len) return;
   
   // Copy the data payload
   if (dataLen > 0) {
@@ -100,15 +154,17 @@ void sendLoRaMeshAck(uint8_t destination, uint8_t messageId) {
   uint8_t ackMessage[20];
   uint8_t pos = 0;
   
-  // Build LoRaMesh header
+  // Build LoRaMesh header - must match exact format expected by library
   ackMessage[pos++] = destination;      // Destination
   ackMessage[pos++] = buoyID;          // Source (gateway)
   ackMessage[pos++] = messageId;       // Use original message ID for ACK
   ackMessage[pos++] = MESSAGE_TYPE_ACK; // Message Type ACK
   ackMessage[pos++] = 0;               // Hop Count
   ackMessage[pos++] = 0;               // Visited Count (no visited nodes)
-  ackMessage[pos++] = destination;     // Next Hop (direct)
+  // No visited nodes array since visitedCount = 0
+  ackMessage[pos++] = destination;     // Next Hop (direct to destination)
   ackMessage[pos++] = 0;               // Data Length (ACK has no payload)
+  // No data payload since dataLen = 0
   
   rf95.send(ackMessage, pos);
   rf95.waitPacketSent();
@@ -141,15 +197,9 @@ void getBroadcastReply (char *message, uint8_t destination_id, double latitude, 
 }
 
 void createPayload(char *payload, size_t buffer_size, double latitude, double longitude){
-  // create payload as Json
-  StaticJsonDocument<128> payload_json;
-
-  payload_json["latitude"] = latitude;
-  payload_json["longitude"] = longitude;
-  payload_json["id"] = buoyID;
-
-  // move JSON to the payload buffer
-  serializeJson(payload_json, payload, buffer_size);
+  // create payload as JSON string manually
+  snprintf(payload, buffer_size, "{\"latitude\":%.6f,\"longitude\":%.6f,\"id\":%d}", 
+           latitude, longitude, buoyID);
 }
 void getDynamiteAcknowledge (char *message, uint8_t destination_id, uint8_t origin_id) {
   // create 16 bit header - 00(srcID)(destID)
@@ -167,13 +217,8 @@ void getDynamiteAcknowledge (char *message, uint8_t destination_id, uint8_t orig
 
   // create and concatenate payload to message
   char payload[11];
-  // create the JSON file
-  StaticJsonDocument<128> payload_json;
-
-  payload_json["id"] = origin_id;
-
-  // move JSON to the payload buffer
-  serializeJson(payload_json, payload, 11);
+  // create the JSON string manually
+  snprintf(payload, 11, "{\"id\":%d}", origin_id);
 
   strcat(message, payload);
 }
@@ -333,6 +378,19 @@ void checkLora() {
             break;
         }
       }
+      return;
+    } else {
+      // Non-LoRaMesh packet - print raw data
+      Console.print("Raw packet (");
+      Console.print(len);
+      Console.print(" bytes): ");
+      for (uint8_t i = 0; i < len; i++) {
+        if (message[i] < 0x10) Console.print("0");
+        Console.print(message[i], HEX);
+        Console.print(" ");
+      }
+      Console.print(" RSSI: ");
+      Console.println(rf95.lastRssi());
       return;
     }
 
